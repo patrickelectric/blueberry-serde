@@ -1,9 +1,7 @@
-//! Basic usage example for blueberry-serde.
-//!
-//! Demonstrates serialization/deserialization of structs with various field
-//! types, message headers, sequences, strings, and boolean packing.
-
-use blueberry_serde::{deserialize, deserialize_message, serialize, serialize_message};
+use blueberry_serde::{
+    deserialize, deserialize_message, deserialize_packet, serialize, serialize_message,
+    serialize_packet,
+};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Serialize, Deserialize, PartialEq)]
@@ -25,7 +23,6 @@ struct DeviceStatus {
 }
 
 fn main() {
-    // -- Raw serialization (no message header) --
     println!("=== Raw Serialization ===");
     let reading = SensorReading {
         sensor_id: 42,
@@ -36,14 +33,21 @@ fn main() {
     };
 
     let bytes = serialize(&reading).unwrap();
-    println!("Serialized {} bytes: {:02X?}", bytes.len(), bytes);
+    println!("Serialized {} bytes:", bytes.len());
+    hex_dump(&bytes);
 
     let decoded: SensorReading = deserialize(&bytes).unwrap();
     println!("Decoded: {:?}", decoded);
     assert_eq!(reading, decoded);
 
-    // -- Message serialization (with header) --
     println!("\n=== Message Serialization ===");
+    let module_key = 0x01;
+    let message_key = 0x42;
+    let message_bytes = serialize_message(&reading, module_key, message_key).unwrap();
+    let packet_bytes = serialize_packet(&[&message_bytes]).unwrap();
+    println!("Packet {} bytes:", packet_bytes.len());
+    hex_dump(&packet_bytes);
+
     let status = DeviceStatus {
         device_id: 100,
         name: "sensor-alpha".to_string(),
@@ -54,24 +58,31 @@ fn main() {
 
     let module_key = 0x01;
     let message_key = 0x42;
-    let msg_bytes = serialize_message(&status, module_key, message_key).unwrap();
-    println!("Message {} bytes: {:02X?}", msg_bytes.len(), msg_bytes);
+    let message_bytes = serialize_message(&status, module_key, message_key).unwrap();
+    let packet_bytes = serialize_packet(&[&message_bytes]).unwrap();
+    println!("Packet {} bytes:", packet_bytes.len());
+    hex_dump(&packet_bytes);
 
-    let (header, decoded_status): (_, DeviceStatus) = deserialize_message(&msg_bytes).unwrap();
-    println!("Header: {:?}", header);
+    let (pkt_header, msgs) = deserialize_packet(&packet_bytes).unwrap();
+    println!(
+        "Packet: {} words, CRC=0x{:04X}",
+        pkt_header.length_words, pkt_header.crc
+    );
+
+    let (header, decoded_status): (_, DeviceStatus) = deserialize_message(msgs[0]).unwrap();
+    println!("Message header: {:?}", header);
     println!("Decoded: {:?}", decoded_status);
     assert_eq!(status, decoded_status);
     assert_eq!(header.module_key, module_key);
     assert_eq!(header.message_key, message_key);
 
-    // -- Forward compatibility demo --
     println!("\n=== Forward Compatibility ===");
 
     #[derive(Debug, Serialize, Deserialize, PartialEq)]
     struct StatusV2 {
         device_id: u32,
         name: String,
-        readings: Vec<u16>,
+        readings: Vec<u32>,
         online: bool,
         calibrated: bool,
         // New in V2:
@@ -87,14 +98,60 @@ fn main() {
         firmware_version: 0x0200,
     };
 
-    let new_bytes = serialize_message(&new_status, module_key, message_key).unwrap();
+    let new_msg = serialize_message(&new_status, module_key, message_key).unwrap();
+    let new_packet = serialize_packet(&[&new_msg]).unwrap();
 
     // Old firmware reads it as the original DeviceStatus (missing firmware_version)
-    let (_, old_decoded): (_, DeviceStatus) = deserialize_message(&new_bytes).unwrap();
+    let (_, new_msgs) = deserialize_packet(&new_packet).unwrap();
+    let (_, old_decoded): (_, DeviceStatus) = deserialize_message(new_msgs[0]).unwrap();
     println!(
         "Old firmware sees: device_id={}, name={:?}, online={}",
         old_decoded.device_id, old_decoded.name, old_decoded.online
     );
 
-    println!("\nAll examples passed!");
+    // -- Packet framing (multiple messages) --
+    println!("\n=== Packet Framing ===");
+    let msg1 = serialize_message(&reading, 0x01, 0x01).unwrap();
+    let msg2 = serialize_message(&status, 0x01, 0x42).unwrap();
+
+    let packet = serialize_packet(&[&msg1, &msg2]).unwrap();
+    println!("Packet {} bytes:", packet.len());
+    hex_dump(&packet);
+
+    let (_, messages) = deserialize_packet(&packet).unwrap();
+    let (_, r): (_, SensorReading) = deserialize_message(messages[0]).unwrap();
+    let (_, s): (_, DeviceStatus) = deserialize_message(messages[1]).unwrap();
+    assert_eq!(r, reading);
+    assert_eq!(s, status);
+}
+
+fn hex_dump(bytes: &[u8]) {
+    let cols = 16;
+
+    let headers: Vec<String> = (0..cols)
+        .map(|i| format!("{:>4}", format!("+{:X}", i)))
+        .collect();
+    println!("        {}", headers.join(" "));
+
+    let full_sep = vec!["----"; cols].join(" ");
+    println!("        {}", full_sep);
+
+    for (i, chunk) in bytes.chunks(cols).enumerate() {
+        let offset = i * cols;
+        let mut cells: Vec<String> = chunk
+            .iter()
+            .map(|b| format!("{:>4}", format!("{:02X}", b)))
+            .collect();
+        cells.resize(cols, "    ".to_string());
+        println!("0x{:02X}  | {} |", offset, cells.join(" "));
+    }
+
+    let last_count = if bytes.is_empty() {
+        0
+    } else if bytes.len() % cols == 0 {
+        cols
+    } else {
+        bytes.len() % cols
+    };
+    println!("        {}", vec!["----"; last_count].join(" "));
 }

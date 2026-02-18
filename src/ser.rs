@@ -42,6 +42,12 @@ impl Default for Serializer {
 }
 
 impl Serializer {
+    /// Pad a deferred data block to a 4-byte word boundary.
+    fn pad_block_to_word(block: &mut Vec<u8>) {
+        let padded = (block.len() + 3) & !3;
+        block.resize(padded, 0);
+    }
+
     /// Create a new serializer.
     pub fn new() -> Self {
         Self {
@@ -84,6 +90,15 @@ impl Serializer {
     /// the sequence header index fields.
     pub fn finalize(mut self) -> Vec<u8> {
         self.flush_bools();
+        // Data blocks are word-addressed; when present, align the fixed body
+        // before appending deferred blocks.
+        if !self.seq_data_blocks.is_empty() {
+            let body_padded_len = (self.buf.len() + 3) & !3;
+            if self.buf.len() != body_padded_len {
+                self.buf.resize(body_padded_len, 0);
+                self.pos = body_padded_len;
+            }
+        }
         let body_len = self.buf.len();
 
         // Append each sequence data block and fix up the header.
@@ -333,27 +348,24 @@ impl<'a> ser::Serializer for &'a mut Serializer {
     }
 
     fn serialize_str(self, v: &str) -> Result<()> {
-        // Strings are sequences of UTF-8 bytes.
-        // Write sequence header inline, data deferred to end.
+        // Strings use a 2-byte inline placeholder: u16 index into deferred data.
         let bytes = v.as_bytes();
         self.flush_bools();
 
-        // Sequence header: u16 index (placeholder) + u16 elementByteLength (1 for u8)
+        // String placeholder: u16 index (placeholder)
         self.write_padding(2);
         let header_offset = self.buf.len();
-        self.buf.extend_from_slice(&[0u8; 4]); // placeholder
-        self.pos += 4;
+        self.buf.extend_from_slice(&[0u8; 2]); // placeholder
+        self.pos += 2;
 
-        // elementByteLength = 1 (UTF-8 bytes)
-        LittleEndian::write_u16(&mut self.buf[header_offset + 2..header_offset + 4], 1);
-
-        // Build the data block: u32 length + bytes
+        // Build the data block: u32 length + bytes, padded to word boundary
         let block_idx = self.seq_data_blocks.len();
         let mut block = Vec::with_capacity(4 + bytes.len());
         let mut tmp = [0u8; 4];
         LittleEndian::write_u32(&mut tmp, bytes.len() as u32);
         block.extend_from_slice(&tmp);
         block.extend_from_slice(bytes);
+        Serializer::pad_block_to_word(&mut block);
         self.seq_data_blocks.push(block);
 
         self.seq_fixups.push((header_offset, block_idx));
@@ -377,6 +389,7 @@ impl<'a> ser::Serializer for &'a mut Serializer {
         LittleEndian::write_u32(&mut tmp, v.len() as u32);
         block.extend_from_slice(&tmp);
         block.extend_from_slice(v);
+        Serializer::pad_block_to_word(&mut block);
         self.seq_data_blocks.push(block);
 
         self.seq_fixups.push((header_offset, block_idx));
@@ -697,6 +710,7 @@ impl<'a> ser::SerializeSeq for SequenceSerializer<'a> {
         let mut new_block = Vec::with_capacity(4 + block.len());
         new_block.extend_from_slice(&count_buf);
         new_block.append(block);
+        Serializer::pad_block_to_word(&mut new_block);
         *block = new_block;
 
         // Set the elementByteLength in the header

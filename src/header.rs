@@ -18,7 +18,9 @@ pub struct MessageHeader {
     pub message_key: u16,
     /// Total number of 32-bit words in this message (including header).
     pub length: u16,
-    /// Total number of top-level fields including the header fields.
+    /// Highest field ordinal present in this message.
+    ///
+    /// Header ordinals are 0..2, so this is at least 2 for any valid message.
     pub max_ordinal: u8,
     /// Reserved for future use.
     pub tbd: u8,
@@ -27,8 +29,8 @@ pub struct MessageHeader {
 /// Size of the message header in bytes.
 pub const HEADER_SIZE: usize = 8;
 
-/// Number of header fields counted toward max_ordinal.
-/// The header contributes: module_message_key, length, and ordinal/tbd.
+/// Number of reserved header ordinals.
+/// The header occupies ordinals 0..2.
 pub const HEADER_FIELD_COUNT: u8 = 3;
 
 impl MessageHeader {

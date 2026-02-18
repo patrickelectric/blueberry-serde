@@ -42,13 +42,13 @@ fn message_length_in_words() {
 }
 
 #[test]
-fn message_max_ordinal_includes_header_fields() {
+fn message_max_ordinal_is_highest_field_ordinal() {
     let msg = SimpleMsg { code: 1, flags: 2 };
     let bytes = serialize_message(&msg, 0, 0).unwrap();
     let header = MessageHeader::decode(&bytes).unwrap();
 
-    // SimpleMsg has 2 fields + 3 header fields = 5
-    assert_eq!(header.max_ordinal, 5);
+    // Header uses ordinals 0..2; SimpleMsg fields are ordinals 3 and 4.
+    assert_eq!(header.max_ordinal, 4);
 }
 
 #[test]
@@ -77,5 +77,5 @@ fn empty_message() {
     assert_eq!(msg, decoded);
     // Header only: 8 bytes = 2 words
     assert_eq!(header.length, 2);
-    assert_eq!(header.max_ordinal, 3); // 0 fields + 3 header fields
+    assert_eq!(header.max_ordinal, 2); // header ordinals only (0..2)
 }

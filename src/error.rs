@@ -41,6 +41,12 @@ pub enum Error {
 
     #[error("sequence index out of bounds: offset {0}")]
     SequenceIndexOutOfBounds(usize),
+
+    #[error("invalid packet header (missing or bad magic word)")]
+    InvalidPacketHeader,
+
+    #[error("CRC mismatch: expected 0x{expected:04X}, got 0x{actual:04X}")]
+    CrcMismatch { expected: u16, actual: u16 },
 }
 
 impl serde::de::Error for Error {

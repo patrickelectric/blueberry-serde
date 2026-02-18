@@ -217,6 +217,16 @@ impl<'de> Deserializer<'de> {
         self.pos += 4;
         Ok((index, elem_byte_len))
     }
+
+    /// Read a string placeholder (u16 index into deferred data block).
+    fn read_string_index(&mut self) -> Result<u16> {
+        self.flush_bools();
+        self.read_padding(2);
+        self.check_remaining(2)?;
+        let index = LittleEndian::read_u16(&self.data[self.pos..]);
+        self.pos += 2;
+        Ok(index)
+    }
 }
 
 impl<'de> de::Deserializer<'de> for &mut Deserializer<'de> {
@@ -320,8 +330,8 @@ impl<'de> de::Deserializer<'de> for &mut Deserializer<'de> {
     where
         V: de::Visitor<'de>,
     {
-        // String = sequence of UTF-8 bytes
-        let (index, _elem_byte_len) = self.read_sequence_header()?;
+        // String placeholder = u16 index into deferred UTF-8 block.
+        let index = self.read_string_index()?;
 
         if index == 0 {
             // Zero header = empty string
