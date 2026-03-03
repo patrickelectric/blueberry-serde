@@ -53,6 +53,41 @@
 //! reads only the fields it knows about and silently skips any trailing fields
 //! added in newer schema revisions.
 //!
+//! # Backward Compatibility
+//!
+//! Newer firmware can deserialize messages from older firmware by using
+//! `Option<T>` for trailing struct fields. Fields not present in the message
+//! (as determined by `max_ordinal` in the header) are returned as `None`.
+//!
+//! `Option<T>` fields **must** be at the trailing end of the struct. Once a
+//! field is `None`, all subsequent fields must also be `None`.
+//!
+//! Supported patterns:
+//!
+//! ```rust
+//! # use serde::{Serialize, Deserialize};
+//! // Flat trailing optionals
+//! #[derive(Serialize, Deserialize)]
+//! struct Sensor {
+//!     value: u32,
+//!     status: u16,
+//!     threshold: Option<u32>,
+//! }
+//!
+//! // Extension struct pattern (recommended for versioning)
+//! #[derive(Serialize, Deserialize)]
+//! struct ExtV1 { c: u32 }
+//!
+//! #[derive(Serialize, Deserialize)]
+//! struct Potato {
+//!     a: u32,
+//!     b: u32,
+//!     ext_v1: Option<ExtV1>,
+//! }
+//! ```
+//!
+//! `Option<T>` inside sequences (`Vec<Option<T>>`) is not supported.
+//!
 //! # Examples
 //!
 //! ```rust
@@ -204,8 +239,11 @@ where
 {
     let header = MessageHeader::decode(data).ok_or(Error::InvalidHeader)?;
     let message_byte_len = header.length as usize * 4;
+    let payload_field_count =
+        (header.max_ordinal as usize).saturating_sub(HEADER_FIELD_COUNT.saturating_sub(1) as usize);
 
     let mut deserializer = Deserializer::with_message_context(data, HEADER_SIZE, message_byte_len);
+    deserializer.set_payload_field_count(payload_field_count);
     let value = T::deserialize(&mut deserializer)?;
 
     Ok((header, value))

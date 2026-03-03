@@ -25,6 +25,14 @@ pub struct Deserializer<'de> {
     message_byte_len: Option<usize>,
     /// Position where the message body starts (after header).
     message_start: usize,
+    /// Number of top-level payload fields present in the message (derived from
+    /// `max_ordinal`). Used for `Option<T>` trailing field support.
+    payload_field_count: Option<usize>,
+    /// Current struct nesting depth (1 = top-level struct being deserialized).
+    struct_depth: usize,
+    /// Set by `StructAccess` when the current field index exceeds the message's
+    /// payload field count. Checked by `deserialize_option` to return `None`.
+    field_beyond_message: bool,
 }
 
 impl<'de> Deserializer<'de> {
@@ -38,6 +46,9 @@ impl<'de> Deserializer<'de> {
             in_seq_data: false,
             message_byte_len: None,
             message_start: 0,
+            payload_field_count: None,
+            struct_depth: 0,
+            field_beyond_message: false,
         }
     }
 
@@ -58,7 +69,19 @@ impl<'de> Deserializer<'de> {
             in_seq_data: false,
             message_byte_len: Some(message_byte_len),
             message_start: 0,
+            payload_field_count: None,
+            struct_depth: 0,
+            field_beyond_message: false,
         }
+    }
+
+    /// Set the number of top-level payload fields present in the message.
+    ///
+    /// Derived from `max_ordinal` in the message header. Used to determine
+    /// whether trailing `Option<T>` fields should be `None` (field absent)
+    /// or `Some` (field present).
+    pub fn set_payload_field_count(&mut self, count: usize) {
+        self.payload_field_count = Some(count);
     }
 
     /// Skip forward to the end of the message (for forward-compat).
@@ -395,11 +418,23 @@ impl<'de> de::Deserializer<'de> for &mut Deserializer<'de> {
         self.deserialize_bytes(visitor)
     }
 
-    fn deserialize_option<V>(self, _visitor: V) -> Result<V::Value>
+    fn deserialize_option<V>(self, visitor: V) -> Result<V::Value>
     where
         V: de::Visitor<'de>,
     {
-        Err(Error::TypeNotSupported)
+        if self.in_seq_data {
+            return Err(Error::TypeNotSupported);
+        }
+
+        if self.field_beyond_message {
+            return visitor.visit_none();
+        }
+
+        if self.payload_field_count.is_none() && self.pos >= self.data.len() {
+            return visitor.visit_none();
+        }
+
+        visitor.visit_some(&mut *self)
     }
 
     fn deserialize_unit<V>(self, visitor: V) -> Result<V::Value>
@@ -466,6 +501,8 @@ impl<'de> de::Deserializer<'de> for &mut Deserializer<'de> {
         visitor.visit_seq(StructAccess {
             de: self,
             remaining: len,
+            field_index: 0,
+            is_top_level: false,
         })
     }
 
@@ -498,9 +535,13 @@ impl<'de> de::Deserializer<'de> for &mut Deserializer<'de> {
         V: de::Visitor<'de>,
     {
         self.flush_bools();
+        let is_top_level = self.struct_depth == 0;
+        self.struct_depth += 1;
         visitor.visit_seq(StructAccess {
             de: self,
             remaining: fields.len(),
+            field_index: 0,
+            is_top_level,
         })
     }
 
@@ -541,6 +582,16 @@ impl<'de> de::Deserializer<'de> for &mut Deserializer<'de> {
 struct StructAccess<'a, 'de> {
     de: &'a mut Deserializer<'de>,
     remaining: usize,
+    field_index: usize,
+    is_top_level: bool,
+}
+
+impl<'a, 'de> Drop for StructAccess<'a, 'de> {
+    fn drop(&mut self) {
+        if self.is_top_level {
+            self.de.struct_depth -= 1;
+        }
+    }
 }
 
 impl<'a, 'de> de::SeqAccess<'de> for StructAccess<'a, 'de> {
@@ -556,7 +607,20 @@ impl<'a, 'de> de::SeqAccess<'de> for StructAccess<'a, 'de> {
             return Ok(None);
         }
         self.remaining -= 1;
+        self.field_index += 1;
+
+        if self.is_top_level {
+            if let Some(msg_fields) = self.de.payload_field_count {
+                self.de.field_beyond_message = self.field_index > msg_fields;
+            }
+        }
+
         let value = de::DeserializeSeed::deserialize(seed, &mut *self.de)?;
+
+        if self.is_top_level {
+            self.de.field_beyond_message = false;
+        }
+
         Ok(Some(value))
     }
 

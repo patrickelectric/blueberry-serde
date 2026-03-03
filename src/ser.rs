@@ -33,6 +33,12 @@ pub struct Serializer {
     /// Set to HEADER_SIZE when serializing a message so sequence indices
     /// are relative to the message start (including header), not just the body.
     base_offset: usize,
+    /// Current struct nesting depth (1 = top-level struct being serialized).
+    /// Used to ensure only top-level fields are counted in `field_count`.
+    struct_depth: usize,
+    /// Set by `serialize_none` when at top-level depth, consumed by
+    /// `serialize_field` to skip counting absent `Option` fields.
+    last_was_none: bool,
 }
 
 impl Default for Serializer {
@@ -60,6 +66,8 @@ impl Serializer {
             in_seq_data: false,
             field_count: 0,
             base_offset: 0,
+            struct_depth: 0,
+            last_was_none: false,
         }
     }
 
@@ -75,6 +83,8 @@ impl Serializer {
             in_seq_data: false,
             field_count: 0,
             base_offset: 0,
+            struct_depth: 0,
+            last_was_none: false,
         }
     }
 
@@ -397,14 +407,17 @@ impl<'a> ser::Serializer for &'a mut Serializer {
     }
 
     fn serialize_none(self) -> Result<()> {
-        Err(Error::TypeNotSupported)
+        if self.struct_depth == 1 {
+            self.last_was_none = true;
+        }
+        Ok(())
     }
 
-    fn serialize_some<T>(self, _value: &T) -> Result<()>
+    fn serialize_some<T>(self, value: &T) -> Result<()>
     where
         T: ser::Serialize + ?Sized,
     {
-        Err(Error::TypeNotSupported)
+        value.serialize(self)
     }
 
     fn serialize_unit(self) -> Result<()> {
@@ -500,6 +513,7 @@ impl<'a> ser::Serializer for &'a mut Serializer {
 
     fn serialize_struct(self, _name: &'static str, _len: usize) -> Result<Self::SerializeStruct> {
         self.flush_bools();
+        self.struct_depth += 1;
         Ok(StructCompound { ser: self })
     }
 
@@ -536,11 +550,19 @@ impl<'a> ser::SerializeStruct for StructCompound<'a> {
     where
         T: ser::Serialize + ?Sized,
     {
-        self.ser.field_count += 1;
-        value.serialize(&mut *self.ser)
+        value.serialize(&mut *self.ser)?;
+        if self.ser.struct_depth == 1 {
+            if self.ser.last_was_none {
+                self.ser.last_was_none = false;
+            } else {
+                self.ser.field_count += 1;
+            }
+        }
+        Ok(())
     }
 
     fn end(self) -> Result<()> {
+        self.ser.struct_depth -= 1;
         self.ser.flush_bools();
         Ok(())
     }
@@ -672,6 +694,8 @@ impl<'a> SequenceSerializer<'a> {
             in_seq_data: true,
             field_count: 0,
             base_offset: 0,
+            struct_depth: 0,
+            last_was_none: false,
         };
         value.serialize(&mut elem_ser)?;
 
