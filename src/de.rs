@@ -508,13 +508,24 @@ impl<'de> de::Deserializer<'de> for &mut Deserializer<'de> {
 
     fn deserialize_tuple_struct<V>(
         self,
-        _name: &'static str,
+        name: &'static str,
         len: usize,
         visitor: V,
     ) -> Result<V::Value>
     where
         V: de::Visitor<'de>,
     {
+        if name == crate::optional_field::OPTIONAL_FIELD_MARKER {
+            let ordinal = len;
+            if let Some(field_count) = self.payload_field_count {
+                if ordinal > field_count {
+                    return visitor.visit_none();
+                }
+            } else if self.pos >= self.data.len() {
+                return visitor.visit_none();
+            }
+            return visitor.visit_some(&mut *self);
+        }
         self.deserialize_tuple(len, visitor)
     }
 

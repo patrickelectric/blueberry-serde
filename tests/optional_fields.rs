@@ -3,7 +3,9 @@
 //! Newer firmware can use `Option<T>` at the trailing end of structs to
 //! gracefully handle messages from older firmware that lack those fields.
 
-use blueberry_serde::{deserialize, deserialize_message, serialize, serialize_message};
+use blueberry_serde::{
+    deserialize, deserialize_message, serialize, serialize_message, OptionalField,
+};
 use serde::{Deserialize, Serialize};
 
 // Flat sender types (simulate old firmware without Options)
@@ -495,6 +497,16 @@ struct SmallPotatoV4Flat {
     f: u32,
 }
 
+#[derive(Debug, Serialize, Deserialize, PartialEq)]
+struct SmallPotatoOptional {
+    a: u8,
+    c: OptionalField<3, u8>,
+    d: OptionalField<4, u8>,
+    e: OptionalField<5, u8>,
+    b: u32,
+    f: OptionalField<6, u32>,
+}
+
 const SP_MODULE: u16 = 0x01;
 const SP_MSG: u16 = 0x02;
 
@@ -684,4 +696,89 @@ fn sp_base_roundtrip() {
     let bytes = serialize_message(&val, SP_MODULE, SP_MSG).unwrap();
     let (_, d): (_, SmallPotato) = deserialize_message(&bytes).unwrap();
     assert_eq!(val, d);
+}
+
+#[test]
+fn sp_optional_roundtrip() {
+    let val = SmallPotatoOptional {
+        a: 1,
+        c: OptionalField::some(3),
+        d: OptionalField::some(4),
+        e: OptionalField::some(5),
+        b: 2,
+        f: OptionalField::some(6),
+    };
+    let bytes = serialize_message(&val, SP_MODULE, SP_MSG).unwrap();
+    let (_, d): (_, SmallPotatoOptional) = deserialize_message(&bytes).unwrap();
+    assert_eq!(val, d);
+}
+
+#[test]
+fn sp_optional_roundtrip_none() {
+    let val = SmallPotatoOptional {
+        a: 1,
+        c: OptionalField::none(),
+        d: OptionalField::none(),
+        e: OptionalField::none(),
+        b: 2,
+        f: OptionalField::none(),
+    };
+    let bytes = serialize_message(&val, SP_MODULE, SP_MSG).unwrap();
+    let (_, d): (_, SmallPotatoOptional) = deserialize_message(&bytes).unwrap();
+    assert_eq!(val, d);
+}
+
+#[test]
+fn sp_optional_as_v4() {
+    let (_, d): (_, SmallPotatoOptional) = deserialize_message(&SP_GOLD_V4).unwrap();
+    assert_eq!(d.a, 1);
+    assert_eq!(*d.c, Some(3));
+    assert_eq!(*d.d, Some(4));
+    assert_eq!(*d.e, Some(5));
+    assert_eq!(d.b, 2);
+    assert_eq!(*d.f, Some(6));
+}
+
+#[test]
+fn sp_optional_as_gold_base() {
+    let (_, d): (_, SmallPotatoOptional) = deserialize_message(&SP_GOLD_BASE).unwrap();
+    assert_eq!(d.a, 1);
+    assert_eq!(d.b, 2);
+    assert_eq!(*d.c, None);
+    assert_eq!(*d.d, None);
+    assert_eq!(*d.e, None);
+    assert_eq!(*d.f, None);
+}
+
+#[test]
+fn sp_optional_as_gold_v1() {
+    let (_, d): (_, SmallPotatoOptional) = deserialize_message(&SP_GOLD_V1).unwrap();
+    assert_eq!(d.a, 1);
+    assert_eq!(d.b, 2);
+    assert_eq!(*d.c, Some(3));
+    assert_eq!(*d.d, None);
+    assert_eq!(*d.e, None);
+    assert_eq!(*d.f, None);
+}
+
+#[test]
+fn sp_optional_as_gold_v2() {
+    let (_, d): (_, SmallPotatoOptional) = deserialize_message(&SP_GOLD_V2).unwrap();
+    assert_eq!(d.a, 1);
+    assert_eq!(d.b, 2);
+    assert_eq!(*d.c, Some(3));
+    assert_eq!(*d.d, Some(4));
+    assert_eq!(*d.e, None);
+    assert_eq!(*d.f, None);
+}
+
+#[test]
+fn sp_optional_as_gold_v3() {
+    let (_, d): (_, SmallPotatoOptional) = deserialize_message(&SP_GOLD_V3).unwrap();
+    assert_eq!(d.a, 1);
+    assert_eq!(d.b, 2);
+    assert_eq!(*d.c, Some(3));
+    assert_eq!(*d.d, Some(4));
+    assert_eq!(*d.e, Some(5));
+    assert_eq!(*d.f, None);
 }

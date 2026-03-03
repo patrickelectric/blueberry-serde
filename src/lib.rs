@@ -145,6 +145,7 @@
 pub mod de;
 pub mod error;
 pub mod header;
+pub mod optional_field;
 pub mod packet;
 pub mod ser;
 
@@ -154,6 +155,8 @@ pub use crate::de::Deserializer;
 pub use crate::error::{Error, Result};
 #[doc(inline)]
 pub use crate::header::{MessageHeader, HEADER_FIELD_COUNT, HEADER_SIZE};
+#[doc(inline)]
+pub use crate::optional_field::OptionalField;
 #[doc(inline)]
 pub use crate::packet::{
     crc16_ccitt, PacketHeader, BLUEBERRY_PORT, PACKET_HEADER_SIZE, PACKET_MAGIC,
