@@ -507,6 +507,16 @@ struct SmallPotatoOptional {
     f: OptionalField<6, u32>,
 }
 
+#[derive(Debug, Serialize, Deserialize, PartialEq)]
+struct SmallPotatoOptionalWithF {
+    a: u8,
+    c: OptionalField<3, u8>,
+    d: OptionalField<5, u8>,
+    e: OptionalField<6, u8>,
+    b: u32,
+    f: OptionalField<4, u32>,
+}
+
 const SP_MODULE: u16 = 0x01;
 const SP_MSG: u16 = 0x02;
 
@@ -527,6 +537,15 @@ const SP_GOLD_V1: [u8; 16] = [
     0x04, 0x00, 0x05, 0x00, // header word 1: length=4, max_ordinal=5, tbd=0
     0x01, 0x03, 0x00, 0x00, // a=1, c=3 + 2 bytes padding for b
     0x02, 0x00, 0x00, 0x00, // b=2
+];
+
+#[rustfmt::skip]
+const SP_GOLD_V1_WITH_F: [u8; 20] = [
+    0x02, 0x00, 0x01, 0x00, // header word 0
+    0x04, 0x00, 0x06, 0x00, // header word 1: length=4, max_ordinal=5, tbd=0
+    0x01, 0x03, 0x00, 0x00, // a=1, c=3 + 2 bytes padding for b
+    0x02, 0x00, 0x00, 0x00, // b=2
+    0x06, 0x00, 0x00, 0x00, // f=6
 ];
 
 #[rustfmt::skip]
@@ -781,4 +800,15 @@ fn sp_optional_as_gold_v3() {
     assert_eq!(*d.d, Some(4));
     assert_eq!(*d.e, Some(5));
     assert_eq!(*d.f, None);
+}
+
+#[test]
+fn sp_optional_with_f_as_gold_v1() {
+    let (_, d): (_, SmallPotatoOptionalWithF) = deserialize_message(&SP_GOLD_V1_WITH_F).unwrap();
+    assert_eq!(d.a, 1);
+    assert_eq!(d.b, 2);
+    assert_eq!(*d.c, Some(3));
+    assert_eq!(*d.d, None);
+    assert_eq!(*d.e, None);
+    assert_eq!(*d.f, Some(6));
 }
